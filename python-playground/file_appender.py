@@ -1,6 +1,7 @@
 import random
 t_start = 0 
 t_end = 20
+time = 20
 new_time = 0
 
 def time_count(start_val):
@@ -9,9 +10,10 @@ def time_count(start_val):
     current_time = new_time
     print("time at " + str(new_time))
     
+    
 def appender(time, data_0, data_1):
      # open logs/data.csv, append
-    file = open("logs/power_logs.csv", "a")
+    file = open("logs/logs.csv", "a")
     
     # type conversions for appending
     str_csv = ", "
@@ -29,4 +31,4 @@ def appender(time, data_0, data_1):
 # main program here
 for x in range(t_end):
     time_count(t_start)
-    #appender(time, 0, 1)
+    appender(t_end, 0, 1)
