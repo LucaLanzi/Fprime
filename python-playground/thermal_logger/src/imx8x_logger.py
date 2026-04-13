@@ -437,9 +437,14 @@ try:
     samples_saved = 0       # Total samples saved
     
     start_real_time = time.time()
-    for x in range(NUM_READINGS):
-        current_time = x + 1
-        print(f"time at {current_time}")
+    sample_count = 0  # Counter for display purposes
+    
+    print(f"[CLIENT] Starting continuous data collection...")
+    print(f"[CLIENT] Send SIGTERM (Ctrl+C) to stop logging")
+    
+    while True:
+        sample_count += 1
+        print(f"time at {sample_count}")
         
         # Simulate time passing
         time.sleep(READ_INTERVAL)
@@ -509,14 +514,14 @@ try:
             imx8_data = all_sensor_data.get('imx8', {})
             print(f" IMX8_CPU:T{imx8_data.get('temp_c', 0)}C", end="")
             print(" (buffered, not sent)")
-    
-    if DEBUG:
-        print(f"\n[CLIENT] Summary:")
-        print(f"[CLIENT] Total samples read: {samples_read}")
-        print(f"[CLIENT] Total samples saved: {samples_saved}")
-        print(f"[CLIENT] Reduction: {100 * (1 - samples_saved/samples_read):.1f}%")
-        print(f"[CLIENT] Data saved to {timestamped_output_file}")
         
 finally:
+    elapsed_time = time.time() - start_real_time
+    print(f"\n[CLIENT] Logging stopped after {elapsed_time:.2f} seconds")
+    print(f"[CLIENT] Total samples read: {samples_read}")
+    print(f"[CLIENT] Total samples saved: {samples_saved}")
+    if samples_read > 0:
+        print(f"[CLIENT] Reduction: {100 * (1 - samples_saved/samples_read):.1f}%")
+    print(f"[CLIENT] Data saved to {timestamped_output_file}")
     if bus is not None:
         bus.close()

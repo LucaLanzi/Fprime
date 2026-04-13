@@ -268,9 +268,14 @@ try:
     samples_since_save = 0  # Counter for sampling control
     
     start_real_time = time.time()
-    for x in range(JETSON_NUM_READINGS):
-        current_time = x + 1
-        print(f"time at {current_time}")
+    sample_count = 0  # Counter for display purposes
+    
+    print(f"[JETSON] Starting continuous data collection...")
+    print(f"[JETSON] Send SIGTERM (Ctrl+C) to stop logging")
+    
+    while True:
+        sample_count += 1
+        print(f"time at {sample_count}")
         
         # Simulate time passing
         time.sleep(JETSON_READ_INTERVAL)
@@ -315,17 +320,15 @@ try:
                 if zone_key in thermal_data:
                     print(f" Zone{zone_id}:{thermal_data[zone_key]}C", end="")
             print(" (buffered, not sent)")
-    
-    # Print summary
-    end_real_time = time.time()
-    elapsed_time = end_real_time - start_real_time
-    
-    print(f"\n[JETSON] Completed after {elapsed_time:.2f} seconds")
-    print(f"[JETSON] Samples read: {samples_read}, saved: {samples_saved}")
-    print(f"[JETSON] Local file: {timestamped_output_file}")
 
 except KeyboardInterrupt:
-    print("\n[JETSON] Interrupted by user")
+    elapsed_time = time.time() - start_real_time
+    print(f"\n[JETSON] Logging stopped after {elapsed_time:.2f} seconds")
+    print(f"[JETSON] Total samples read: {samples_read}")
+    print(f"[JETSON] Total samples saved: {samples_saved}")
+    if samples_read > 0:
+        print(f"[JETSON] Reduction: {100 * (1 - samples_saved/samples_read):.1f}%")
+    print(f"[JETSON] Local file: {timestamped_output_file}")
 except Exception as e:
     print(f"[JETSON] Error: {e}")
     sys.exit(1)
