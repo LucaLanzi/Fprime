@@ -23,7 +23,7 @@ JETSON_CLIENT_DEVICE_ID = "jetson_orin_agx"
 # ============================================================================
 
 # Number of readings to take
-JETSON_NUM_READINGS = 20
+JETSON_NUM_READINGS = 5
 
 # Delay between readings (in seconds)
 JETSON_READ_INTERVAL = 0.1

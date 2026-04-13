@@ -95,10 +95,10 @@ IMX8_TEMP_SENSOR_FALLBACK_PATHS = [
 # ============================================================================
 
 # Number of readings to take
-NUM_READINGS = 20
+NUM_READINGS = 5
 
 # Delay between readings (in seconds)
-READ_INTERVAL = 0.1
+READ_INTERVAL = 0.5
 
 # SAMPLING CONTROL: Save every Nth reading (decimation)
 # Examples:

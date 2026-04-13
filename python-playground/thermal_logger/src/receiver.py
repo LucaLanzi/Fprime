@@ -15,56 +15,100 @@ from config_server import (
 )
 from config_imx8 import SENSORS_INA260, SENSORS_MCP9808
 
-# CSV file path
-OUTPUT_FILE = SERVER_OUTPUT_FILE
-
-# Lock for thread-safe file writes
+# Lock for thread-safe file writes (protects both file creation and writes)
 file_lock = threading.Lock()
 
+# Device-specific file locks stored by device_id
+device_file_locks = {}
 
-def get_csv_header():
+def get_output_file(device_id):
     """
-    Generates CSV header row for all sensors (INA260 power + MCP9808 temperature + IMX8 CPU temperature).
-    Includes device_id to distinguish between different source devices.
+    Generates device-specific output file path.
+    
+    Args:
+        device_id: Device identifier (e.g., 'imx8', 'jetson')
+    
+    Returns:
+        str: Path to device-specific CSV file
+    """
+    output_dir = os.path.dirname(SERVER_OUTPUT_FILE) or '.'
+    base_name = os.path.splitext(os.path.basename(SERVER_OUTPUT_FILE))[0]
+    return os.path.join(output_dir, f"{base_name}_{device_id}.csv")
+
+def get_device_lock(device_id):
+    """
+    Get or create a lock for a specific device.
+    Uses global lock to ensure thread-safe lock creation.
+    """
+    global device_file_locks
+    if device_id not in device_file_locks:
+        with file_lock:
+            # Double-check pattern to avoid race condition
+            if device_id not in device_file_locks:
+                device_file_locks[device_id] = threading.Lock()
+    return device_file_locks[device_id]
+
+
+def get_csv_header(device_id):
+    """
+    Generates device-specific CSV header row.
+    - IMX8: INA260 power + MCP9808 temperature + IMX8 CPU temperature
+    - Jetson: Jetson thermal zones only
+    
+    Args:
+        device_id: Device identifier to determine header format
     
     Returns:
         str: CSV header line
     """
-    header_parts = ['server_timestamp', 'device_id']
+    header_parts = ['server_timestamp']
     
-    # Add INA260 headers
-    for sensor_name in sorted(SENSORS_INA260.keys()):
-        header_parts.append(f"{sensor_name}_voltage_V")
-        header_parts.append(f"{sensor_name}_current_mA")
-        header_parts.append(f"{sensor_name}_power_mW")
+    if device_id == 'imx8':
+        # IMX8: Add INA260 and MCP9808 data
+        # Add INA260 headers (power monitoring)
+        for sensor_name in sorted(SENSORS_INA260.keys()):
+            header_parts.append(f"{sensor_name}_voltage_V")
+            header_parts.append(f"{sensor_name}_current_mA")
+            header_parts.append(f"{sensor_name}_power_mW")
+        
+        # Add MCP9808 (temperature) headers
+        for sensor_name in sorted(SENSORS_MCP9808.keys()):
+            header_parts.append(f"{sensor_name}_temp_C")
+        
+        # Add IMX8 CPU temperature header
+        header_parts.append("imx8_cpu_temp_C")
     
-    # Add MCP9808 (temperature) headers
-    for sensor_name in sorted(SENSORS_MCP9808.keys()):
-        header_parts.append(f"{sensor_name}_temp_C")
-    
-    # Add IMX8 CPU temperature header
-    header_parts.append("imx8_cpu_temp_C")
-    
-    # Add Jetson thermal zone headers
-    for zone_id in range(10):  # Support up to 10 thermal zones
-        header_parts.append(f"jetson_thermal_zone{zone_id}_C")
+    else:
+        # Jetson: Add thermal zone headers only
+        for zone_id in range(10):  # Support up to 10 thermal zones
+            header_parts.append(f"jetson_thermal_zone{zone_id}_C")
     
     header_parts.append('client_time')
     return ','.join(header_parts)
 
-def initialize_output_file():
-    """Create CSV file with headers if it doesn't exist."""
-    if not os.path.exists(OUTPUT_FILE):
-        with open(OUTPUT_FILE, 'w') as f:
-            f.write(get_csv_header() + '\n')
-        print(f"Created new file: {OUTPUT_FILE}")
-    else:
-        print(f"Appending to existing file: {OUTPUT_FILE}")
+def initialize_output_file(device_id):
+    """
+    Create device-specific CSV file with device-specific headers if it doesn't exist.
+    Uses device-specific lock to ensure thread-safe initialization.
+    
+    Args:
+        device_id: Device identifier for the output file
+    """
+    output_file = get_output_file(device_id)
+    device_lock = get_device_lock(device_id)
+    
+    with device_lock:
+        if not os.path.exists(output_file):
+            with open(output_file, 'w') as f:
+                f.write(get_csv_header(device_id) + '\n')
+            print(f"Created new file: {output_file}")
+        else:
+            print(f"Appending to existing file: {output_file}")
 
 def save_data(timestamp, data):
     """
-    Saves received sensor data to CSV file with server timestamp.
-    Uses lock for thread-safe file writes and immediate fsync.
+    Saves received sensor data to device-specific CSV file with server timestamp.
+    Uses device-specific lock for thread-safe file writes and immediate fsync.
     
     Args:
         timestamp: Server's timestamp (time authority)
@@ -79,43 +123,51 @@ def save_data(timestamp, data):
         imx8_data = sensors_data.get('imx8', {})
         jetson_data = sensors_data.get('jetson_thermal', {})
         
-        # Build CSV row
-        row_parts = [timestamp, device_id]
+        # Initialize file for this device if needed
+        initialize_output_file(device_id)
+        output_file = get_output_file(device_id)
+        device_lock = get_device_lock(device_id)
         
-        # Add INA260 data for each sensor in order
-        for sensor_name in sorted(SENSORS_INA260.keys()):
-            if sensor_name in ina260_data:
-                sensor_info = ina260_data[sensor_name]
-                row_parts.append(str(sensor_info.get('voltage', 0)))
-                row_parts.append(str(sensor_info.get('current', 0)))
-                row_parts.append(str(sensor_info.get('power', 0)))
-            else:
-                # Add empty columns if sensor not present
-                row_parts.extend(['', '', ''])
+        # Build device-specific CSV row (device_id is implicit in filename)
+        row_parts = [timestamp]
         
-        # Add MCP9808 (temperature) data for each sensor in order
-        for sensor_name in sorted(SENSORS_MCP9808.keys()):
-            if sensor_name in mcp9808_data:
-                sensor_info = mcp9808_data[sensor_name]
-                row_parts.append(str(sensor_info.get('temp_c', 0)))
-            else:
-                row_parts.append('')
+        if device_id == 'imx8':
+            # IMX8: Add INA260 and MCP9808 data only
+            # Add INA260 data for each sensor in order
+            for sensor_name in sorted(SENSORS_INA260.keys()):
+                if sensor_name in ina260_data:
+                    sensor_info = ina260_data[sensor_name]
+                    row_parts.append(str(sensor_info.get('voltage', 0)))
+                    row_parts.append(str(sensor_info.get('current', 0)))
+                    row_parts.append(str(sensor_info.get('power', 0)))
+                else:
+                    # Add empty columns if sensor not present
+                    row_parts.extend(['', '', ''])
+            
+            # Add MCP9808 (temperature) data for each sensor in order
+            for sensor_name in sorted(SENSORS_MCP9808.keys()):
+                if sensor_name in mcp9808_data:
+                    sensor_info = mcp9808_data[sensor_name]
+                    row_parts.append(str(sensor_info.get('temp_c', 0)))
+                else:
+                    row_parts.append('')
+            
+            # Add IMX8 CPU temperature
+            row_parts.append(str(imx8_data.get('temp_c', 0) if imx8_data else ''))
         
-        # Add IMX8 CPU temperature
-        row_parts.append(str(imx8_data.get('temp_c', 0) if imx8_data else ''))
-        
-        # Add Jetson thermal zones (up to 10)
-        for zone_id in range(10):
-            zone_key = f'zone_{zone_id}'
-            zone_temp = jetson_data.get(zone_key, '') if jetson_data else ''
-            row_parts.append(str(zone_temp))
+        else:
+            # Jetson: Add thermal zones only
+            for zone_id in range(10):
+                zone_key = f'zone_{zone_id}'
+                zone_temp = jetson_data.get(zone_key, '') if jetson_data else ''
+                row_parts.append(str(zone_temp))
         
         row_parts.append(client_time)
         row = ','.join(row_parts) + '\n'
         
-        # Thread-safe file write
-        with file_lock:
-            with open(OUTPUT_FILE, 'a') as f:
+        # Device-specific thread-safe file write
+        with device_lock:
+            with open(output_file, 'a') as f:
                 f.write(row)
                 f.flush()
                 os.fsync(f.fileno())
@@ -204,8 +256,8 @@ def start_server():
     Start TCP server to receive and save sensor data from multiple clients.
     Uses threading to handle concurrent connections.
     Server provides timestamp (time authority) for all clients.
+    Per-device CSV files are created on first data arrival from each device.
     """
-    initialize_output_file()
     
     # Create socket
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -217,7 +269,7 @@ def start_server():
         print(f"[SERVER] Configuration loaded from config.py")
     
     print(f"TIME AUTHORITY SERVER listening on {SERVER_LISTEN_IP}:{SERVER_PORT}")
-    print(f"[SERVER] Output file: {OUTPUT_FILE}")
+    print(f"[SERVER] Output files: {os.path.dirname(SERVER_OUTPUT_FILE) or '.'}/received_data_*.csv")
     print(f"[SERVER] Multi-threaded server - handles multiple simultaneous clients")
     print("Waiting for data from clients...")
     
