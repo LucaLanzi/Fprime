@@ -1,15 +1,18 @@
 # Power and Temperature Sensor Data Collection System
 
-A networked sensor data collection system that reads power monitoring data from INA260 sensors and temperature data from MCP9808 sensors, synchronizing timestamps across multiple machines.
+A networked multi-device sensor data collection system that reads power monitoring data from INA260 sensors, temperature data from MCP9808 sensors, and system temperature data from IMX8 and Jetson devices, synchronizing timestamps across multiple machines.
 
 ## Overview
 
-This system consists of two components:
+This system supports multiple client types:
 
-- **Client** (`file_appender.py`): Reads INA260 (power) and MCP9808 (temperature) sensor data and sends it to the server
-- **Server** (`receiver.py`): Receives data, acts as time authority, and archives to file
+- **IMX8 Logger** (`imx8x_logger.py`): Reads INA260 (power), MCP9808 (temperature), and IMX8 CPU temperature sensors
+- **Jetson Logger** (`jetson_logger.py`): Reads all Jetson Orin AGX thermal zones (GPU, System, AO, etc.)
+- **Server** (`receiver.py`): Receives data from multiple simultaneous clients, acts as time authority, and archives to unified CSV file
 
-Both programs save timestamped data locally. The server's clock is the authoritative time source, ensuring synchronized timestamps even if individual devices have incorrect clocks.
+Both clients save timestamped data locally. The server's clock is the authoritative time source, ensuring synchronized timestamps even if individual devices have incorrect clocks. The server uses **multi-threading** to handle multiple concurrent client connections.
+
+> **For multi-device setup details**, see [MULTI_CLIENT_README.md](MULTI_CLIENT_README.md)
 
 ## Sensors
 
@@ -25,15 +28,36 @@ Both programs save timestamped data locally. The server's clock is the authorita
 
 ## System Architecture
 
+### Single Machine / Simple Setup
 ```
 ┌─────────────────────────┐          TCP/IP          ┌──────────────────────┐
-│  SENSOR DEVICE          │         (Port 8000)       │  SERVER/ARCHIVE      │
-│  (file_appender.py)     │────────────────────────→  │  (receiver.py)       │
+│  IMX8 DEVICE            │         (Port 8000)       │  SERVER/ARCHIVE      │
+│  (imx8x_logger.py)      │────────────────────────→  │  (receiver.py)       │
 │                         │                           │                      │
 │  3x INA260 Sensors      │←────────────────────────  │  Time Authority      │
-│  3x MCP9808 Sensors     │   Timestamp Response      │  └─ received_data.csv│
+│  3x MCP9808 Sensors     │   Timestamp Response      │  Multi-threaded      │
+│  1x IMX8 CPU Temp       │                           │  └─ received_data.csv│
 │  └─ logs/logs.csv       │                           │                      │
 └─────────────────────────┘                           └──────────────────────┘
+```
+
+### Multi-Device Setup (Recommended)
+```
+┌──────────────────────────┐                         ┌──────────────────────┐
+│  IMX8 DEVICE 1           │                         │  SERVER/ARCHIVE      │
+│  (imx8x_logger.py)       │                         │  (receiver.py)       │
+│  • INA260 Power          │\                        │                      │
+│  • MCP9808 Thermal       │ \       TCP/IP          │  Time Authority      │
+│  • IMX8 CPU Temp         │  \    (Port 8000)       │  Multi-threaded      │
+└──────────────────────────┘   \                     │                      │
+                               → ────────────────→  │  received_data.csv   │
+                               ←── (multi-threaded)  │  (all devices)       │
+┌──────────────────────────┐   /                     └──────────────────────┘
+│  JETSON ORIN AGX         │  /
+│  (jetson_logger.py)      │ /
+│  • 10x Thermal Zones     │/
+│  • GPU, System, AO, etc  │
+└──────────────────────────┘
 ```
 
 ## Installation
@@ -101,7 +125,7 @@ SENSORS_MCP9808 = {
 }
 ```
 
-## Usage
+## Quick Start
 
 ### Local Testing (Same Machine)
 
@@ -111,10 +135,16 @@ cd /Users/luquito/Documents/GitHub/Fprime/python-playground
 python receiver.py
 ```
 
-**Terminal 2 - Run the client:**
+**Terminal 2 - Run the IMX8 client:**
 ```bash
 cd /Users/luquito/Documents/GitHub/Fprime/python-playground
-python file_appender.py
+python imx8x_logger.py
+```
+
+**Terminal 3 (Optional) - Run the Jetson client:**
+```bash
+cd /Users/luquito/Documents/GitHub/Fprime/python-playground
+python jetson_logger.py
 ```
 
 Expected output:
@@ -124,14 +154,17 @@ Expected output:
 [SERVER] Configuration loaded from config.py
 TIME AUTHORITY SERVER listening on 0.0.0.0:8000
 [SERVER] Output file: received_data.csv
-[SERVER] Note: Server saves all received data (sampling controlled by client)
-Waiting for data from client...
+[SERVER] Multi-threaded server - handles multiple simultaneous clients
+Waiting for data from clients...
 
-Connection from ('127.0.0.1', 54321)
-[SERVER TIME] 2026-04-13 14:30:45.123456 | obc:V5.0V,I250.5mA,P1250.0mW | perif:V12.0V,I50.1mA,P601.2mW | jetson:V3.3V,I150.2mA,P495.7mW | obc:T35.25C | perif:T42.50C | jetson:T38.75C
+[NEW CONNECTION] from ('127.0.0.1', 54321)
+[imx8] 2026-04-13 14:30:45.123456 | obc:V5.0V,I250.5mA,P1250.0mW | IMX8_CPU:T45.2C
+
+[NEW CONNECTION] from ('127.0.0.1', 54322)
+[jetson_orin_agx] 2026-04-13 14:30:45.124567 | Zone0:72.1C | Zone1:65.3C | Zone2:58.2C
 ```
 
-**Client Terminal:**
+**IMX8 Client Terminal:**
 ```
 [CLIENT] *** SIMULATION MODE ENABLED ***
 [CLIENT] Using synthetic sensor data for testing
@@ -145,12 +178,26 @@ Connection from ('127.0.0.1', 54321)
         - perif     (0x1A): Peripheral System Temperature
 
 time at 1
-[SKIPPED] obc:V5.0V,I250.5mA jetson:V3.3V,I150.2mA perif:V12.0V,I50.1mA obc:T35.25C jetson:T38.75C perif:T42.50C (buffered, not sent)
+[SKIPPED] obc:V5.0V,I250.5mA jetson:V3.3V,I150.2mA IMX8_CPU:T45.2C (buffered, not sent)
 time at 2
-[SYNCED] [SAVED 1] obc:V5.01V,I251.2mA jetson:V3.31V,I151.0mA perif:V12.01V,I50.3mA obc:T35.31C jetson:T38.81C perif:T42.56C
+[SYNCED] [SAVED 1] obc:V5.01V,I251.2mA jetson:V3.31V,I151.0mA IMX8_CPU:T45.3C
+```
+
+**Jetson Client Terminal:**
+```
+[JETSON] Connecting to server at 127.0.0.1:8000
+[JETSON] Taking 20 readings
+[JETSON] *** SIMULATION MODE ENABLED ***
+
+time at 1
+[SYNCED] [SAVED 1] Zone0:72.1C Zone1:65.3C Zone2:58.2C Zone3:52.1C
+time at 2
+[SYNCED] [SAVED 2] Zone0:72.3C Zone1:65.4C Zone2:58.1C Zone3:52.2C
 ```
 
 ### Network Testing (Different Machines)
+
+> **For detailed multi-device network setup**, see [MULTI_CLIENT_README.md](MULTI_CLIENT_README.md)
 
 **On Server Machine:**
 
@@ -168,37 +215,57 @@ time at 2
    python receiver.py
    ```
 
-**On Client/Sensor Machine:**
+**On IMX8 Sensor Machine:**
 
 1. Edit `config.py`:
    ```python
    SERVER_IP = "192.168.1.100"  # Use your server's actual IP
+   CLIENT_DEVICE_ID = "imx8"     # Device identifier
    ```
 
 2. Run client:
    ```bash
-   python file_appender.py
+   python imx8x_logger.py
+   ```
+
+**On Jetson Sensor Machine:**
+
+1. Edit `jetson_logger.py`:
+   ```python
+   JETSON_SERVER_IP = "192.168.1.100"  # Use your server's actual IP
+   JETSON_CLIENT_DEVICE_ID = "jetson_orin_agx"
+   ```
+
+2. Run client:
+   ```bash
+   python jetson_logger.py
    ```
 
 ## Output Files
 
-### Client Output: `logs/logs.csv`
+### Client Output: `logs/logs_*.csv`
 
-Locally saved sensor readings with server-synchronized timestamps. Excel-compatible format with clearly labeled columns for plotting:
+Locally saved sensor readings with server-synchronized timestamps. Excel-compatible format with clearly labeled columns for plotting.
 
+**IMX8 Client** (`logs/logs_YYYY-MM-DD_HH-MM-SS.csv`):
 ```
-timestamp, obc_voltage_V, obc_current_mA, obc_power_mW, perif_voltage_V, perif_current_mA, perif_power_mW, jetson_voltage_V, jetson_current_mA, jetson_power_mW, obc_temp_C, perif_temp_C, jetson_temp_C
+timestamp, obc_voltage_V, obc_current_mA, obc_power_mW, perif_voltage_V, perif_current_mA, perif_power_mW, jetson_voltage_V, jetson_current_mA, jetson_power_mW, obc_temp_C, perif_temp_C, jetson_temp_C, imx8_cpu_temp_C, jetson_thermal_zone0_C, ...
 2026-04-13 14:30:45.123456, 5.0, 250.5, 1250.0, 12.0, 50.1, 601.2, 3.3, 150.2, 495.7, 35.25, 42.50, 38.75
 2026-04-13 14:30:45.223456, 5.01, 251.2, 1255.6, 12.01, 50.3, 603.6, 3.31, 151.0, 499.6, 35.31, 42.56, 38.81
 2026-04-13 14:30:45.323456, 4.99, 249.8, 1249.0, 11.99, 49.9, 599.8, 3.29, 149.4, 491.8, 35.19, 42.44, 38.69
 ```
 
-### Server Output: `received_data.csv`
+**Jetson Client** (`logs/jetson_logs_YYYY-MM-DD_HH-MM-SS.csv`):
+```
+timestamp, device_id, [empty INA/MCP columns], imx8_cpu_temp_C, jetson_thermal_zone0_C, jetson_thermal_zone1_C, ..., client_time
+```
 
-Archived readings with server's authoritative timestamp and client's local time (for debugging clock synchronization):
+### Server Output: `received_data.csv` (Multi-Device Archive)
+
+Unified archive with data from all connected clients (IMX8, Jetson, etc.). Server's authoritative timestamp and client device identification:
 
 ```
-server_timestamp, obc_voltage_V, obc_current_mA, obc_power_mW, perif_voltage_V, perif_current_mA, perif_power_mW, jetson_voltage_V, jetson_current_mA, jetson_power_mW, obc_temp_C, perif_temp_C, jetson_temp_C, client_time
+server_timestamp, device_id, obc_voltage_V, obc_current_mA, obc_power_mW, ..., imx8_cpu_temp_C, jetson_thermal_zone0_C, ..., jetson_thermal_zone9_C, client_time
 2026-04-13 14:30:45.123456, 5.0, 250.5, 1250.0, 12.0, 50.1, 601.2, 3.3, 150.2, 495.7, 35.25, 42.50, 38.75, 2026-04-13 14:30:45.087654
 2026-04-13 14:30:45.223456, 5.01, 251.2, 1255.6, 12.01, 50.3, 603.6, 3.31, 151.0, 499.6, 35.31, 42.56, 38.81, 2026-04-13 14:30:45.187654
 2026-04-13 14:30:45.323456, 4.99, 249.8, 1249.0, 11.99, 49.9, 599.8, 3.29, 149.4, 491.8, 35.19, 42.44, 38.69, 2026-04-13 14:30:45.287654
@@ -206,11 +273,14 @@ server_timestamp, obc_voltage_V, obc_current_mA, obc_power_mW, perif_voltage_V, 
 
 **CSV Column Descriptions:**
 
-- `timestamp` / `server_timestamp`: Server's authoritative time (Excel recognizes as datetime)
-- `obc_voltage_V`, `perif_voltage_V`, `jetson_voltage_V`: Voltage in volts (INA260)
-- `obc_current_mA`, `perif_current_mA`, `jetson_current_mA`: Current in milliamps (INA260)
-- `obc_power_mW`, `perif_power_mW`, `jetson_power_mW`: Power in milliwatts (INA260)
-- `obc_temp_C`, `perif_temp_C`, `jetson_temp_C`: Temperature in Celsius (MCP9808)
+- `server_timestamp`: Server's authoritative time (Excel recognizes as datetime)
+- `device_id`: Source device identifier (`imx8`, `jetson_orin_agx`, etc.)
+- `obc_voltage_V`, `perif_voltage_V`, `jetson_voltage_V`: Voltage in volts (INA260) - IMX8 only
+- `obc_current_mA`, `perif_current_mA`, `jetson_current_mA`: Current in milliamps (INA260) - IMX8 only
+- `obc_power_mW`, `perif_power_mW`, `jetson_power_mW`: Power in milliwatts (INA260) - IMX8 only
+- `obc_temp_C`, `perif_temp_C`, `jetson_temp_C`: Temperature in Celsius (MCP9808) - IMX8 only
+- `imx8_cpu_temp_C`: IMX8 SoC CPU temperature (Linux thermal zone) - IMX8 only
+- `jetson_thermal_zone0_C` through `jetson_thermal_zone9_C`: Jetson thermal zones - Jetson only
 - `client_time`: Client's local time when data was read (for diagnosing clock issues)
 
 **Note:** If client and server timestamps differ significantly (see `client_time` vs `server_timestamp`), it indicates clock synchronization issues between devices.
@@ -302,18 +372,22 @@ pip install smbus2
 
 ## Advanced Usage
 
-### Multiple Clients
+### Multiple Simultaneous Clients
 
-Each client device can run its own `file_appender.py` instance, all sending to the same server.
+The receiver uses **multi-threading** to handle multiple concurrent client connections. Devices can send data simultaneously without performance degradation.
 
-**Server** (`received_data.csv`) receives data from multiple clients:
+**Example with IMX8 and Jetson clients:**
+
+If both send at the same time:
 ```
-server_timestamp, obc_voltage_V, ..., jetson_temp_C, client_time
-2026-04-13 14:30:45.123456, 5.0, ..., 38.75, 2026-04-13 14:30:45.087654
-2026-04-13 14:30:45.125123, 5.02, ..., 38.78, 2026-04-13 14:30:45.089111
+server_timestamp, device_id, obc_voltage_V, ..., imx8_cpu_temp_C, jetson_thermal_zone0_C, ..., client_time
+2026-04-13 14:30:45.123456, imx8, 5.0, ..., 45.2, , , 2026-04-13 14:30:45.087654
+2026-04-13 14:30:45.124567, jetson_orin_agx, , , , 72.1, 65.3, 2026-04-13 14:30:45.088765
 ```
 
-All devices use the same server as their time authority, ensuring synchronized timestamps.
+All devices use the same server as their time authority, ensuring synchronized timestamps across all machines.
+
+> **See [MULTI_CLIENT_README.md](MULTI_CLIENT_README.md)** for detailed multi-device setup, network configuration, and plotting examples.
 
 ### Excel Plotting
 

@@ -10,11 +10,19 @@ try:
 except ImportError:
     smbus2 = None
 
-from config import (
+import sys
+from pathlib import Path
+
+# Add config directory to path
+sys.path.insert(0, str(Path(__file__).parent.parent / 'config'))
+
+from config_imx8 import (
     SERVER_IP, SERVER_PORT, I2C_BUS,
     NUM_READINGS, READ_INTERVAL, CLIENT_OUTPUT_FILE, DEBUG, SAVE_EVERY,
     SIMULATE_SENSOR, INA260_BUS_VOLTAGE, INA260_CURRENT, INA260_POWER,
-    TIMESTAMP_FORMAT, SENSORS_INA260, SENSORS_MCP9808, MCP9808_REG_TEMP
+    TIMESTAMP_FORMAT, SENSORS_INA260, SENSORS_MCP9808, MCP9808_REG_TEMP,
+    IMX8_TEMP_SENSOR_PATH, IMX8_TEMP_SENSOR_FALLBACK_PATHS, CLIENT_DEVICE_ID,
+    NETWORK_TIMEOUT
 )
 
 # Update the output file from config
@@ -165,6 +173,51 @@ def read_all_mcp9808_sensors(bus):
     return all_data
 
 
+def read_imx8_cpu_temperature():
+    """
+    Reads IMX8 SoC CPU temperature from Linux thermal zone.
+    
+    The kernel exposes CPU temperature at /sys/class/thermal/thermal_zone0/temp
+    Value is in millidegrees Celsius (divide by 1000 to get °C).
+    
+    Returns:
+        dict: Temperature data with key 'temp_c' (Celsius)
+              Format: {'temp_c': X}
+    """
+    if SIMULATE_SENSOR:
+        # Simulate IMX8 CPU temperature (typically higher than ambient)
+        return {
+            'temp_c': round(random.uniform(40.0, 85.0), 2)
+        }
+    
+    # Try primary path first
+    sensor_paths = [IMX8_TEMP_SENSOR_PATH] + IMX8_TEMP_SENSOR_FALLBACK_PATHS
+    
+    for sensor_path in sensor_paths:
+        try:
+            with open(sensor_path, 'r') as f:
+                temp_millidegrees = int(f.read().strip())
+                # Convert from millidegrees to degrees Celsius
+                temp_celsius = temp_millidegrees / 1000.0
+                return {
+                    'temp_c': round(temp_celsius, 2)
+                }
+        except FileNotFoundError:
+            continue
+        except Exception as e:
+            if DEBUG:
+                print(f"Error reading IMX8 temperature from {sensor_path}: {e}")
+            continue
+    
+    # If no path worked, log warning and return 0
+    if DEBUG:
+        print(f"Warning: Could not read IMX8 CPU temperature from any sensor path. Tried: {sensor_paths}")
+    
+    return {
+        'temp_c': 0
+    }
+
+
 def time_count(current_time):
     new_time = current_time + 1
     print("time at " + str(new_time))
@@ -178,7 +231,7 @@ def appender(timestamp, sensor_data, output_file=None):
     Args:
         timestamp: Timestamp string in Excel-compatible format
         sensor_data: Dict with data from all sensors
-                     Format: {'ina260': {sensor_name: {voltage, current, power}}, 'mcp9808': {sensor_name: {temp_c}}}
+                     Format: {'ina260': {...}, 'mcp9808': {...}, 'imx8': {'temp_c': X}}
         output_file: Optional custom output file path (defaults to CLIENT_OUTPUT_FILE from config)
     """
     if output_file is None:
@@ -206,6 +259,10 @@ def appender(timestamp, sensor_data, output_file=None):
                 data = mcp9808_data[sensor_name]
                 row_parts.append(str(data.get('temp_c', 0)))
         
+        # Add IMX8 CPU temperature
+        imx8_data = sensor_data.get('imx8', {})
+        row_parts.append(str(imx8_data.get('temp_c', 0)))
+        
         row = ', '.join(row_parts) + '\n'
         file.write(row)
         file.close()
@@ -218,7 +275,7 @@ def appender(timestamp, sensor_data, output_file=None):
 
 def get_csv_header():
     """
-    Generates CSV header row for all sensors (INA260 power + MCP9808 temperature).
+    Generates CSV header row for all sensors (INA260 power + MCP9808 temperature + IMX8 CPU temperature).
     
     Returns:
         str: CSV header line
@@ -234,6 +291,9 @@ def get_csv_header():
     # Add MCP9808 (temperature) headers
     for sensor_name in sorted(SENSORS_MCP9808.keys()):
         header_parts.append(f"{sensor_name}_temp_C")
+    
+    # Add IMX8 CPU temperature header
+    header_parts.append("imx8_cpu_temp_C")
     
     return ', '.join(header_parts)
 
@@ -252,11 +312,12 @@ def send_data_over_network(sensor_data):
     try:
         # Create socket and connect to server
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(2)  # 2 second timeout
+        sock.settimeout(NETWORK_TIMEOUT)  # Timeout from config
         sock.connect((SERVER_IP, SERVER_PORT))
         
-        # Create data packet as JSON (no timestamp - let server provide it)
+        # Create data packet as JSON with device identification
         data_packet = {
+            'device_id': CLIENT_DEVICE_ID,
             'sensors': sensor_data,
             'client_time': datetime.datetime.now().strftime(TIMESTAMP_FORMAT)
         }
@@ -340,14 +401,16 @@ try:
         # Simulate time passing
         time.sleep(READ_INTERVAL)
         
-        # Read all sensors (INA260 power + MCP9808 temperature)
+        # Read all sensors (INA260 power + MCP9808 temperature + IMX8 CPU temperature)
         ina260_data = read_all_ina260_sensors(bus)
         mcp9808_data = read_all_mcp9808_sensors(bus)
+        imx8_data = read_imx8_cpu_temperature()
         
         # Combine all sensor data
         all_sensor_data = {
             'ina260': ina260_data,
-            'mcp9808': mcp9808_data
+            'mcp9808': mcp9808_data,
+            'imx8': imx8_data
         }
         
         samples_read += 1
@@ -382,6 +445,9 @@ try:
             for sensor_name in sorted(SENSORS_MCP9808.keys()):
                 data = mcp9808_data.get(sensor_name, {})
                 print(f" {sensor_name}:T{data.get('temp_c', 0)}C", end="")
+            # Print IMX8 CPU temperature
+            imx8_data = all_sensor_data.get('imx8', {})
+            print(f" IMX8_CPU:T{imx8_data.get('temp_c', 0)}C", end="")
             print()
         else:
             # Read but don't save
@@ -396,6 +462,9 @@ try:
             for sensor_name in sorted(SENSORS_MCP9808.keys()):
                 data = mcp9808_data.get(sensor_name, {})
                 print(f" {sensor_name}:T{data.get('temp_c', 0)}C", end="")
+            # Print IMX8 CPU temperature
+            imx8_data = all_sensor_data.get('imx8', {})
+            print(f" IMX8_CPU:T{imx8_data.get('temp_c', 0)}C", end="")
             print(" (buffered, not sent)")
     
     if DEBUG:
