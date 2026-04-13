@@ -8,9 +8,9 @@ This system supports multiple client types:
 
 - **IMX8 Logger** (`imx8x_logger.py`): Reads INA260 (power), MCP9808 (temperature), and IMX8 CPU temperature sensors
 - **Jetson Logger** (`jetson_logger.py`): Reads all Jetson Orin AGX thermal zones (GPU, System, AO, etc.)
-- **Server** (`receiver.py`): Receives data from multiple simultaneous clients, acts as time authority, and archives to unified CSV file
+- **Server** (`receiver.py`): Receives data from multiple simultaneous clients, acts as time authority, and archives to per-device CSV files
 
-Both clients save timestamped data locally. The server's clock is the authoritative time source, ensuring synchronized timestamps even if individual devices have incorrect clocks. The server uses **multi-threading** to handle multiple concurrent client connections.
+Both clients save timestamped data locally. The server's clock is the authoritative time source, ensuring synchronized timestamps even if individual devices have incorrect clocks. The server uses **multi-threading** to handle multiple concurrent client connections. Each device's data is saved to a separate CSV file (e.g., `received_data_imx8.csv`, `received_data_jetson.csv`).
 
 > **For multi-device setup details**, see [MULTI_CLIENT_README.md](MULTI_CLIENT_README.md)
 
@@ -50,8 +50,8 @@ Both clients save timestamped data locally. The server's clock is the authoritat
 │  • MCP9808 Thermal       │ \       TCP/IP          │  Time Authority      │
 │  • IMX8 CPU Temp         │  \    (Port 8000)       │  Multi-threaded      │
 └──────────────────────────┘   \                     │                      │
-                               → ────────────────→  │  received_data.csv   │
-                               ←── (multi-threaded)  │  (all devices)       │
+                               → ────────────────→  │  received_data_imx8.csv  │
+                               ←── (multi-threaded)  │  received_data_jetson.csv│
 ┌──────────────────────────┐   /                     └──────────────────────┘
 │  JETSON ORIN AGX         │  /
 │  (jetson_logger.py)      │ /
@@ -174,6 +174,59 @@ JETSON_THERMAL_ZONE_PATHS = [
 ```
 
 > **For complete sensor and configuration details**, see [CONFIG_GUIDE.md](CONFIG_GUIDE.md)
+
+## CSV File Format
+
+### Separate Files Per Device
+
+The receiver creates **separate CSV files for each connected device**. This makes it easy to:
+- Chart each device's data independently in Excel
+- Process or archive device data separately
+- Run multiple data collection sessions without mixing data
+
+**File naming convention:**
+```
+received_data_{device_id}.csv
+```
+
+**Examples:**
+- `received_data_imx8.csv` - Data from IMX8 device
+- `received_data_jetson.csv` - Data from Jetson device
+
+**Note:** The `device_id` is **implicit in the filename**, not stored as a column, keeping the CSV clean for Excel charting.
+
+### Device-Specific CSV Columns
+
+**received_data_imx8.csv** (IMX8 device data only):
+- `server_timestamp` - Time from server (authority source)
+- INA260 Power Monitoring (3 sensors × 3 values each):
+  - `jetson_voltage_V`, `jetson_current_mA`, `jetson_power_mW`
+  - `obc_voltage_V`, `obc_current_mA`, `obc_power_mW`
+  - `perif_voltage_V`, `perif_current_mA`, `perif_power_mW`
+- MCP9808 Temperature (3 sensors):
+  - `jetson_temp_C`, `obc_temp_C`, `perif_temp_C`
+- IMX8 CPU Temperature: `imx8_cpu_temp_C`
+- `client_time` - Timestamp from IMX8 client
+
+**received_data_jetson_orin_agx.csv** (Jetson device data only):
+- `server_timestamp` - Time from server (authority source)
+- Jetson Thermal Zones (10 zones):
+  - `jetson_thermal_zone0_C` through `jetson_thermal_zone9_C`
+- `client_time` - Timestamp from Jetson client
+
+**Example rows:**
+
+IMX8 CSV:
+```
+server_timestamp,jetson_voltage_V,jetson_current_mA,jetson_power_mW,obc_voltage_V,obc_current_mA,obc_power_mW,perif_voltage_V,perif_current_mA,perif_power_mW,jetson_temp_C,obc_temp_C,perif_temp_C,imx8_cpu_temp_C,client_time
+2026-04-13 12:05:40.986311,5.075,292.44,1998.2,5.152,219.29,1936.5,5.165,228.28,1851.9,55.03,32.49,21.37,58.49,2026-04-13 12:05:40.985867
+```
+
+Jetson CSV:
+```
+server_timestamp,jetson_thermal_zone0_C,jetson_thermal_zone1_C,jetson_thermal_zone2_C,jetson_thermal_zone3_C,jetson_thermal_zone4_C,jetson_thermal_zone5_C,jetson_thermal_zone6_C,jetson_thermal_zone7_C,jetson_thermal_zone8_C,jetson_thermal_zone9_C,client_time
+2026-04-13 12:05:43.713826,59.09,68.92,43.07,41.19,53.21,35.38,41.1,35.58,42.54,56.56,2026-04-13 12:05:43.713565
+```
 
 ## Quick Start
 
