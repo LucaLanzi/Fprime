@@ -193,8 +193,51 @@ def appender_local(timestamp, device_id, thermal_data, output_file=None):
         return -1
 
 
+def wait_for_server(max_wait_time=300):
+    """
+    Waits for the server to be available before proceeding.
+    Retries connection attempts until successful or timeout.
+    
+    Args:
+        max_wait_time: Maximum time to wait for server in seconds (default: 5 minutes)
+        
+    Returns:
+        bool: True if server is available, False if timeout reached
+    """
+    start_time = time.time()
+    retry_interval = 2  # Retry every 2 seconds
+    attempt = 0
+    
+    print(f"[JETSON] Waiting for server at {JETSON_SERVER_IP}:{JETSON_SERVER_PORT}...")
+    
+    while time.time() - start_time < max_wait_time:
+        attempt += 1
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(2)
+            sock.connect((JETSON_SERVER_IP, JETSON_SERVER_PORT))
+            sock.close()
+            print(f"[JETSON] Server is ready! (attempt {attempt})")
+            return True
+        except (ConnectionRefusedError, socket.timeout, OSError):
+            elapsed = time.time() - start_time
+            print(f"[JETSON] Attempt {attempt}: Server not ready yet... (elapsed: {elapsed:.0f}s)")
+            time.sleep(retry_interval)
+        except Exception as e:
+            print(f"[JETSON] Connection error: {e}")
+            time.sleep(retry_interval)
+    
+    print(f"[JETSON] Error: Server did not become available within {max_wait_time} seconds")
+    return False
+
+
 # Main program
 try:
+    # Wait for server to be available before starting
+    if not wait_for_server():
+        print("[JETSON] Failed to connect to server. Exiting.")
+        sys.exit(1)
+    
     # Generate timestamped output filename
     run_timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     output_dir = os.path.dirname(JETSON_OUTPUT_FILE)

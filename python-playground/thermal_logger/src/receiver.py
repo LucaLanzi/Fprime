@@ -1,6 +1,7 @@
 import socket
 import json
 import os
+import struct
 from datetime import datetime
 import threading
 import sys
@@ -262,6 +263,8 @@ def start_server():
     # Create socket
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    # Set SO_LINGER to close socket immediately without TIME_WAIT
+    server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack('ii', 1, 0))
     server_socket.bind((SERVER_LISTEN_IP, SERVER_PORT))
     server_socket.listen(5)
     

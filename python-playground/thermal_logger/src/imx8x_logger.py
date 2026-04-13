@@ -298,6 +298,44 @@ def get_csv_header():
     return ', '.join(header_parts)
 
 
+def wait_for_server(max_wait_time=300):
+    """
+    Waits for the server to be available before proceeding.
+    Retries connection attempts until successful or timeout.
+    
+    Args:
+        max_wait_time: Maximum time to wait for server in seconds (default: 5 minutes)
+        
+    Returns:
+        bool: True if server is available, False if timeout reached
+    """
+    start_time = time.time()
+    retry_interval = 2  # Retry every 2 seconds
+    attempt = 0
+    
+    print(f"[CLIENT] Waiting for server at {SERVER_IP}:{SERVER_PORT}...")
+    
+    while time.time() - start_time < max_wait_time:
+        attempt += 1
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(2)
+            sock.connect((SERVER_IP, SERVER_PORT))
+            sock.close()
+            print(f"[CLIENT] Server is ready! (attempt {attempt})")
+            return True
+        except (ConnectionRefusedError, socket.timeout, OSError):
+            elapsed = time.time() - start_time
+            print(f"[CLIENT] Attempt {attempt}: Server not ready yet... (elapsed: {elapsed:.0f}s)")
+            time.sleep(retry_interval)
+        except Exception as e:
+            print(f"[CLIENT] Connection error: {e}")
+            time.sleep(retry_interval)
+    
+    print(f"[CLIENT] Error: Server did not become available within {max_wait_time} seconds")
+    return False
+
+
 def send_data_over_network(sensor_data):
     """
     Sends sensor data over TCP to the receiver program.
@@ -348,6 +386,11 @@ def send_data_over_network(sensor_data):
             
 # main program here
 try:
+    # Wait for server to be available before starting
+    if not wait_for_server():
+        print("[CLIENT] Failed to connect to server. Exiting.")
+        sys.exit(1)
+    
     # Generate timestamped output filename
     run_timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     output_dir = os.path.dirname(CLIENT_OUTPUT_FILE)

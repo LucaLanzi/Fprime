@@ -10,7 +10,7 @@ Customize these settings for your IMX8 device and network.
 # Server IP address
 # For LOCAL TESTING: "127.0.0.1" or "localhost"
 # For NETWORK TESTING: Use the server's actual IP (e.g., "192.168.1.100")
-SERVER_IP = "127.0.0.1"
+SERVER_IP = "192.168.3.13"
 
 # Server port (must match receiver.py SERVER_PORT)
 SERVER_PORT = 8000
@@ -118,7 +118,7 @@ CLIENT_OUTPUT_FILE = "logs/imx_logs.csv"
 DEBUG = True
 
 # Simulate sensor data if I2C hardware not available
-SIMULATE_SENSOR = True
+SIMULATE_SENSOR = False
 
 # Timestamp format for data files (Excel-compatible)
 # Format: YYYY-MM-DD HH:MM:SS.ffffff (space instead of T for Excel recognition)
