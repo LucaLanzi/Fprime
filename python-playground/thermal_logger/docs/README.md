@@ -80,16 +80,54 @@ source fprime_playground/my_playground/fprime-venv/bin/activate
 pip install smbus2
 ```
 
+## Project Structure
+
+For detailed project organization and file descriptions, see [PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md).
+
+## Documentation
+
+📚 **Main Documentation Files:**
+- [**MULTI_CLIENT_README.md**](MULTI_CLIENT_README.md) - Multi-device setup and network configuration
+- [**CONFIG_GUIDE.md**](CONFIG_GUIDE.md) - Complete configuration reference for all settings
+- [**PROJECT_STRUCTURE.md**](PROJECT_STRUCTURE.md) - Detailed project organization
+- [**SEPARATE_CONFIG_FILES.md**](SEPARATE_CONFIG_FILES.md) - Why and how to use separate config files per device
+
 ## Configuration
 
-Edit `config.py` to set your environment:
+### Configuration Files Structure (Updated)
+
+Configuration has been reorganized into **device-specific files**:
+
+- **`config/config_imx8.py`** - IMX8 client settings (SERVER_IP, I2C addresses, sensors)
+- **`config/config_jetson.py`** - Jetson client settings (SERVER_IP, thermal zones)
+- **`config/config_server.py`** - Server settings (LISTEN_IP, PORT, output file)
+
+> **See [SEPARATE_CONFIG_FILES.md](SEPARATE_CONFIG_FILES.md)** for detailed explanation of why configs were separated
+
+### Quick Configuration
+
+**For local testing (same machine):**
 
 ```python
-# For local testing (both programs on same machine)
+# config/config_imx8.py
 SERVER_IP = "127.0.0.1"
+CLIENT_DEVICE_ID = "imx8"
 
-# For network testing (programs on different machines)
-SERVER_IP = "192.168.1.100"  # Use server machine's actual IP
+# config/config_jetson.py
+JETSON_SERVER_IP = "127.0.0.1"
+JETSON_CLIENT_DEVICE_ID = "jetson_orin_agx"
+```
+
+**For network testing (different machines):**
+
+```python
+# config/config_imx8.py
+SERVER_IP = "192.168.1.100"  # Server machine's IP
+CLIENT_DEVICE_ID = "imx8"
+
+# config/config_jetson.py
+JETSON_SERVER_IP = "192.168.1.100"  # Server machine's IP
+JETSON_CLIENT_DEVICE_ID = "jetson_orin_agx"
 ```
 
 ### Key Configuration Options
@@ -107,7 +145,7 @@ SERVER_IP = "192.168.1.100"  # Use server machine's actual IP
 
 ### Sensor Configuration
 
-**INA260 Sensors** (Power Monitoring):
+**IMX8 - INA260 Sensors** (Power Monitoring in `config/config_imx8.py`):
 ```python
 SENSORS_INA260 = {
     'obc': {'address': 0x41, 'description': 'Onboard Computer Switching Regulator'},
@@ -116,7 +154,7 @@ SENSORS_INA260 = {
 }
 ```
 
-**MCP9808 Sensors** (Temperature):
+**IMX8 - MCP9808 Sensors** (Temperature in `config/config_imx8.py`):
 ```python
 SENSORS_MCP9808 = {
     'obc': {'address': 0x19, 'description': 'Onboard Computer Temperature'},
@@ -124,6 +162,18 @@ SENSORS_MCP9808 = {
     'jetson': {'address': 0x1B, 'description': 'Jetson Temperature'}
 }
 ```
+
+**Jetson - Thermal Zones** (in `config/config_jetson.py`):
+```python
+JETSON_THERMAL_ZONE_PATHS = [
+    "/sys/class/thermal/thermal_zone0/temp",  # GPU
+    "/sys/class/thermal/thermal_zone1/temp",  # System
+    "/sys/class/thermal/thermal_zone2/temp",  # AO (Always-On)
+    # ... up to 10+ zones
+]
+```
+
+> **For complete sensor and configuration details**, see [CONFIG_GUIDE.md](CONFIG_GUIDE.md)
 
 ## Quick Start
 
@@ -217,7 +267,7 @@ time at 2
 
 **On IMX8 Sensor Machine:**
 
-1. Edit `config.py`:
+1. Edit `config/config_imx8.py`:
    ```python
    SERVER_IP = "192.168.1.100"  # Use your server's actual IP
    CLIENT_DEVICE_ID = "imx8"     # Device identifier
@@ -225,12 +275,12 @@ time at 2
 
 2. Run client:
    ```bash
-   python imx8x_logger.py
+   python src/imx8x_logger.py
    ```
 
 **On Jetson Sensor Machine:**
 
-1. Edit `jetson_logger.py`:
+1. Edit `config/config_jetson.py`:
    ```python
    JETSON_SERVER_IP = "192.168.1.100"  # Use your server's actual IP
    JETSON_CLIENT_DEVICE_ID = "jetson_orin_agx"
@@ -238,7 +288,7 @@ time at 2
 
 2. Run client:
    ```bash
-   python jetson_logger.py
+   python src/jetson_logger.py
    ```
 
 ## Output Files
@@ -412,6 +462,50 @@ tail -f logs/logs.csv
 tail -f received_data.csv
 ```
 
+## Testing
+
+### Running Unit Tests
+
+Comprehensive tests are available to verify CSV generation, timestamp synchronization, and data aggregation:
+
+```bash
+# Run all tests
+cd tests/
+python test_unified_csv.py
+
+# Or from the thermal_logger root:
+python -m pytest tests/
+```
+
+**Tests validate:**
+- CSV header generation from multiple client types
+- Timestamp synchronization across devices
+- Multi-client data row generation
+- Server aggregation logic
+- Data column ordering and structure
+
+### Manual Testing
+
+1. **Simulation Mode** - Test without hardware:
+   ```python
+   # config/config_imx8.py
+   SIMULATE_SENSOR = True  # Enables synthetic sensor data
+   ```
+
+2. **Local Network Test** - All on same machine:
+   ```bash
+   # Terminal 1: Server
+   python src/receiver.py
+   
+   # Terminal 2: IMX8 Client
+   python src/imx8x_logger.py
+   
+   # Terminal 3: Jetson Client (optional)
+   python src/jetson_logger.py
+   ```
+
+3. **Remote Network Test** - Edit configs and deploy to actual devices
+
 ## Data Sampling / Decimation
 
 Control how often data is saved to reduce file size while maintaining high read frequency:
@@ -436,13 +530,27 @@ This allows high-frequency monitoring while keeping storage and bandwidth requir
 - Network latency: Typically <10ms over local network
 - Each reading cycle: ~100ms (configurable via `READ_INTERVAL`)
 - File I/O: Non-blocking, won't affect sensor readings
+- Multi-threading server: Handles multiple concurrent connections without performance degradation
+
+## Server Configuration
+
+**`config/config_server.py`** settings:
+
+```python
+SERVER_LISTEN_IP = "0.0.0.0"      # Listen on all interfaces
+SERVER_PORT = 8000                 # Port for client connections
+SERVER_OUTPUT_FILE = "received_data.csv"  # Server-side archive
+DEBUG = False                      # Enable verbose logging
+SOCKET_TIMEOUT = 5.0               # Client connection timeout
+SOCKET_BUFFER_SIZE = 4096          # Network buffer size
+```
 
 ## Future Enhancements
 
 Possible improvements:
 - Database backend instead of CSV
 - Real-time visualization dashboard
-- Multi-client aggregation
+- Multi-client aggregation (already implemented!)
 - Data compression for long-term storage
 - SSL/TLS encryption for network transmission
 
@@ -451,5 +559,8 @@ Possible improvements:
 For issues or questions:
 1. Check the Troubleshooting section above
 2. Review terminal output for error messages
-3. Verify `config.py` settings match your hardware setup
-4. Enable `DEBUG = True` in `config.py` for verbose output
+3. Verify config files in `config/` directory match your hardware setup
+4. Enable `DEBUG = True` in config files for verbose output
+5. Consult [CONFIG_GUIDE.md](CONFIG_GUIDE.md) for detailed configuration help
+6. See [MULTI_CLIENT_README.md](MULTI_CLIENT_README.md) for multi-device setup
+7. Run tests with `python tests/test_unified_csv.py` to verify installation
