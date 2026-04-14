@@ -17,17 +17,47 @@ SERVER_LISTEN_IP = "0.0.0.0"
 SERVER_PORT = 8000
 
 # ============================================================================
+# SERVER HANDSHAKE CONFIGURATION
+# ============================================================================
+#
+# Handshake Protocol:
+# 1. Client connects to server
+# 2. Server immediately sends: {"status": "ready", "message": "Server ready to receive data"}
+# 3. Client receives and validates handshake
+# 4. Client begins reading sensors and sending data
+# 5. Server performs time synchronization and validates data
+# 6. Data is logged to device-specific CSV files on server machine only
+#
+
+# ============================================================================
 # SERVER OUTPUT CONFIGURATION
 # ============================================================================
+# 
+# Server receives data from multiple clients (IMX8, Jetson, etc.)
+# and creates device-specific CSV files with server-side timestamps.
+# Each device's data is logged to a separate file: received_data_<device_id>.csv
+#
 
-# Output file for archived data from all clients
+# Output file base name (device_id will be appended: received_data_<device_id>.csv)
 SERVER_OUTPUT_FILE = "received_data.csv"
+
+# ============================================================================
+# SERVER LOGGING ARCHITECTURE
+# ============================================================================
+#
+# Single Source of Truth:
+# - Server is the authoritative time source (all timestamps from server)
+# - Clients send data but do NOT save locally
+# - All data is saved only on server machine
+# - Device-specific CSV files created on first data from each device
+# - Multi-threaded server handles concurrent clients
+#
 
 # ============================================================================
 # DEBUG / DEVELOPMENT
 # ============================================================================
 
-# Enable debug printing for server operations
+# Enable debug printing for server operations (includes handshake log)
 DEBUG = True
 
 # Timestamp format for data files (Excel-compatible)

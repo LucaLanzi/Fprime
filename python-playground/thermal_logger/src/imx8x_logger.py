@@ -18,17 +18,14 @@ sys.path.insert(0, str(Path(__file__).parent.parent / 'config'))
 
 from config_imx8 import (
     SERVER_IP, SERVER_PORT, I2C_BUS,
-    NUM_READINGS, READ_INTERVAL, CLIENT_OUTPUT_FILE, DEBUG, SAVE_EVERY,
+    NUM_READINGS, READ_INTERVAL, DEBUG, SEND_EVERY, SEND_FREQUENCY_HZ,
     SIMULATE_SENSOR, INA260_BUS_VOLTAGE, INA260_CURRENT, INA260_POWER,
     TIMESTAMP_FORMAT, SENSORS_INA260, SENSORS_MCP9808, MCP9808_REG_TEMP,
     IMX8_TEMP_SENSOR_PATH, IMX8_TEMP_SENSOR_FALLBACK_PATHS, CLIENT_DEVICE_ID,
     NETWORK_TIMEOUT
 )
 
-# Update the output file from config
-output_dir = os.path.dirname(CLIENT_OUTPUT_FILE)
-if output_dir and not os.path.exists(output_dir):
-    os.makedirs(output_dir)
+# No local logging - all data sent to remote server
 
 def read_single_ina260(bus, address):
     """
@@ -218,96 +215,19 @@ def read_imx8_cpu_temperature():
     }
 
 
-def time_count(current_time):
-    new_time = current_time + 1
-    print("time at " + str(new_time))
-    return new_time
-    
-    
-def appender(timestamp, sensor_data, output_file=None):
-    """
-    Appends sensor data to CSV file.
-    
-    Args:
-        timestamp: Timestamp string in Excel-compatible format
-        sensor_data: Dict with data from all sensors
-                     Format: {'ina260': {...}, 'mcp9808': {...}, 'imx8': {'temp_c': X}}
-        output_file: Optional custom output file path (defaults to CLIENT_OUTPUT_FILE from config)
-    """
-    if output_file is None:
-        output_file = CLIENT_OUTPUT_FILE
-        
-    try:
-        file = open(output_file, "a")
-        
-        # Build CSV row with data from all sensors
-        row_parts = [timestamp]
-        
-        # Add INA260 data for each sensor in order
-        ina260_data = sensor_data.get('ina260', {})
-        for sensor_name in sorted(SENSORS_INA260.keys()):
-            if sensor_name in ina260_data:
-                data = ina260_data[sensor_name]
-                row_parts.append(str(data.get('voltage', 0)))
-                row_parts.append(str(data.get('current', 0)))
-                row_parts.append(str(data.get('power', 0)))
-        
-        # Add MCP9808 (temperature) data for each sensor in order
-        mcp9808_data = sensor_data.get('mcp9808', {})
-        for sensor_name in sorted(SENSORS_MCP9808.keys()):
-            if sensor_name in mcp9808_data:
-                data = mcp9808_data[sensor_name]
-                row_parts.append(str(data.get('temp_c', 0)))
-        
-        # Add IMX8 CPU temperature
-        imx8_data = sensor_data.get('imx8', {})
-        row_parts.append(str(imx8_data.get('temp_c', 0)))
-        
-        row = ', '.join(row_parts) + '\n'
-        file.write(row)
-        file.close()
-        
-        return 0
-    except Exception as e:
-        print(f"Error writing to file: {e}")
-        return -1
-
-
-def get_csv_header():
-    """
-    Generates CSV header row for all sensors (INA260 power + MCP9808 temperature + IMX8 CPU temperature).
-    
-    Returns:
-        str: CSV header line
-    """
-    header_parts = ['timestamp']
-    
-    # Add INA260 headers
-    for sensor_name in sorted(SENSORS_INA260.keys()):
-        header_parts.append(f"{sensor_name}_voltage_V")
-        header_parts.append(f"{sensor_name}_current_mA")
-        header_parts.append(f"{sensor_name}_power_mW")
-    
-    # Add MCP9808 (temperature) headers
-    for sensor_name in sorted(SENSORS_MCP9808.keys()):
-        header_parts.append(f"{sensor_name}_temp_C")
-    
-    # Add IMX8 CPU temperature header
-    header_parts.append("imx8_cpu_temp_C")
-    
-    return ', '.join(header_parts)
 
 
 def wait_for_server(max_wait_time=300):
     """
-    Waits for the server to be available before proceeding.
+    Waits for the server to be available and ready before proceeding.
+    Performs handshake to confirm server is ready to receive data.
     Retries connection attempts until successful or timeout.
     
     Args:
         max_wait_time: Maximum time to wait for server in seconds (default: 5 minutes)
         
     Returns:
-        bool: True if server is available, False if timeout reached
+        bool: True if server is available and handshakes, False if timeout reached
     """
     start_time = time.time()
     retry_interval = 2  # Retry every 2 seconds
@@ -321,9 +241,24 @@ def wait_for_server(max_wait_time=300):
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(2)
             sock.connect((SERVER_IP, SERVER_PORT))
+            
+            # Wait for handshake/ready message from server
+            response = sock.recv(1024).decode('utf-8').strip()
             sock.close()
-            print(f"[CLIENT] Server is ready! (attempt {attempt})")
-            return True
+            
+            if response:
+                try:
+                    response_data = json.loads(response)
+                    if response_data.get('status') == 'ready':
+                        print(f"[CLIENT] Server handshake received! Server is ready! (attempt {attempt})")
+                        return True
+                except json.JSONDecodeError:
+                    pass
+            
+            elapsed = time.time() - start_time
+            print(f"[CLIENT] Attempt {attempt}: Handshake not complete... (elapsed: {elapsed:.0f}s)")
+            time.sleep(retry_interval)
+            
         except (ConnectionRefusedError, socket.timeout, OSError):
             elapsed = time.time() - start_time
             print(f"[CLIENT] Attempt {attempt}: Server not ready yet... (elapsed: {elapsed:.0f}s)")
@@ -391,18 +326,12 @@ try:
         print("[CLIENT] Failed to connect to server. Exiting.")
         sys.exit(1)
     
-    # Generate timestamped output filename
-    run_timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    output_dir = os.path.dirname(CLIENT_OUTPUT_FILE)
-    output_basename = os.path.basename(CLIENT_OUTPUT_FILE)
-    output_name_without_ext = os.path.splitext(output_basename)[0]
-    output_ext = os.path.splitext(output_basename)[1] or '.csv'
-    timestamped_output_file = os.path.join(output_dir, f"{output_name_without_ext}_{run_timestamp}{output_ext}")
+    print("[CLIENT] *** REMOTE LOGGING ONLY - No local logging ***")
     
     if DEBUG:
         print(f"[CLIENT] Connecting to server at {SERVER_IP}:{SERVER_PORT}")
         print(f"[CLIENT] Using I2C bus {I2C_BUS}, taking {NUM_READINGS} readings")
-        print(f"[CLIENT] Sampling: Reading every {READ_INTERVAL}s, Saving every {SAVE_EVERY} sample(s)")
+        print(f"[CLIENT] Sampling: Reading every {READ_INTERVAL}s, Sending every {SEND_EVERY} sample(s)")
         print(f"[CLIENT] INA260 Power Sensors configured:")
         for sensor_name, config in SENSORS_INA260.items():
             print(f"        - {sensor_name:10} (0x{config['address']:02x}): {config['description']}")
@@ -423,23 +352,20 @@ try:
         except Exception as e:
             print(f"[CLIENT] Warning: Could not open I2C bus {I2C_BUS}: {e}")
             print("[CLIENT] Falling back to simulation mode")
-            bus = None
     
-    # Initialize CSV file with header (using timestamped filename)
-    if not os.path.exists(timestamped_output_file):
-        with open(timestamped_output_file, 'w') as f:
-            f.write(get_csv_header() + '\n')
-        if DEBUG:
-            print(f"[CLIENT] Created new CSV file with header: {timestamped_output_file}")
+    # Calculate send interval based on frequency (times per second)
+    send_interval = 1.0 / SEND_FREQUENCY_HZ if SEND_FREQUENCY_HZ > 0 else float('inf')
+    last_send_time = time.time()
     
-    samples_since_save = 0  # Counter for sampling control
+    samples_since_send = 0  # Counter for sampling control
     samples_read = 0        # Total samples read
-    samples_saved = 0       # Total samples saved
+    samples_sent = 0        # Total samples sent to server
     
     start_real_time = time.time()
     sample_count = 0  # Counter for display purposes
     
-    print(f"[CLIENT] Starting continuous data collection...")
+    print(f"[CLIENT] Send frequency: {SEND_FREQUENCY_HZ} Hz (every {send_interval:.3f}s)")
+    print(f"[CLIENT] Starting continuous data collection (remote logging only)...")
     print(f"[CLIENT] Send SIGTERM (Ctrl+C) to stop logging")
     
     while True:
@@ -462,27 +388,25 @@ try:
         }
         
         samples_read += 1
-        samples_since_save += 1
+        samples_since_send += 1
         
-        # Check if we should save this sample
-        if samples_since_save >= SAVE_EVERY:
-            # Send over network and get server timestamp
+        # Check if it's time to send based on frequency rate limiting and decimation
+        current_time = time.time()
+        time_since_last_send = current_time - last_send_time
+        
+        # Send if: (1) decimation counter reached AND (2) enough time has passed
+        if samples_since_send >= SEND_EVERY and time_since_last_send >= send_interval:
+            # Send over network to remote server for logging
             server_timestamp, sync_success = send_data_over_network(all_sensor_data)
             
-            # Use server timestamp for local storage (synchronized time reference)
-            if server_timestamp:
-                appender(server_timestamp, all_sensor_data, timestamped_output_file)
-                sync_status = "[SYNCED]" if sync_success else "[LOCAL FALLBACK]"
-            else:
-                local_timestamp = datetime.datetime.now().strftime(TIMESTAMP_FORMAT)
-                appender(local_timestamp, all_sensor_data, timestamped_output_file)
-                sync_status = "[NO SYNC]"
+            sync_status = "[SENT]" if sync_success else "[SEND FAILED]"
             
-            samples_saved += 1
-            samples_since_save = 0  # Reset counter
+            samples_sent += 1
+            samples_since_send = 0  # Reset counter
+            last_send_time = current_time  # Update last send time for frequency control
             
-            # Print with save indicator
-            print(f"{sync_status} [SAVED {samples_saved}]", end="")
+            # Print with send indicator
+            print(f"{sync_status} [SENT {samples_sent}]", end="")
             # Print INA260 data
             ina260_data = all_sensor_data.get('ina260', {})
             for sensor_name in sorted(SENSORS_INA260.keys()):
@@ -498,8 +422,8 @@ try:
             print(f" IMX8_CPU:T{imx8_data.get('temp_c', 0)}C", end="")
             print()
         else:
-            # Read but don't save
-            print(f"[SKIPPED]", end="")
+            # Read but don't send
+            print(f"[BUFFERED]", end="")
             # Print INA260 data
             ina260_data = all_sensor_data.get('ina260', {})
             for sensor_name in sorted(SENSORS_INA260.keys()):
@@ -513,15 +437,15 @@ try:
             # Print IMX8 CPU temperature
             imx8_data = all_sensor_data.get('imx8', {})
             print(f" IMX8_CPU:T{imx8_data.get('temp_c', 0)}C", end="")
-            print(" (buffered, not sent)")
+            print(" (not yet sent)")
         
 finally:
     elapsed_time = time.time() - start_real_time
     print(f"\n[CLIENT] Logging stopped after {elapsed_time:.2f} seconds")
     print(f"[CLIENT] Total samples read: {samples_read}")
-    print(f"[CLIENT] Total samples saved: {samples_saved}")
+    print(f"[CLIENT] Total samples sent to server: {samples_sent}")
     if samples_read > 0:
-        print(f"[CLIENT] Reduction: {100 * (1 - samples_saved/samples_read):.1f}%")
-    print(f"[CLIENT] Data saved to {timestamped_output_file}")
+        print(f"[CLIENT] Reduction: {100 * (1 - samples_sent/samples_read):.1f}%")
+    print(f"[CLIENT] All data logged remotely on receiver machine")
     if bus is not None:
         bus.close()

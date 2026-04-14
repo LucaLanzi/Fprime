@@ -15,15 +15,12 @@ sys.path.insert(0, str(Path(__file__).parent.parent / 'config'))
 # Import Jetson-specific configuration
 from config_jetson import (
     JETSON_SERVER_IP, JETSON_SERVER_PORT, JETSON_NUM_READINGS,
-    JETSON_READ_INTERVAL, JETSON_CLIENT_DEVICE_ID, JETSON_OUTPUT_FILE,
+    JETSON_READ_INTERVAL, JETSON_CLIENT_DEVICE_ID,
     DEBUG, SIMULATE_SENSOR, TIMESTAMP_FORMAT, JETSON_THERMAL_ZONE_PATHS,
-    MAX_THERMAL_ZONES, JETSON_SAVE_EVERY, NETWORK_TIMEOUT
+    MAX_THERMAL_ZONES, JETSON_SEND_EVERY, JETSON_SEND_FREQUENCY_HZ, NETWORK_TIMEOUT
 )
 
-# Update the output file directory
-output_dir = os.path.dirname(JETSON_OUTPUT_FILE)
-if output_dir and not os.path.exists(output_dir):
-    os.makedirs(output_dir)
+# No local logging - all data sent to remote server
 
 
 def read_jetson_thermal_zones():
@@ -128,81 +125,17 @@ def send_data_over_network(thermal_data):
         return datetime.datetime.now().strftime(TIMESTAMP_FORMAT), False
 
 
-def get_csv_header():
-    """
-    Generates CSV header row for Jetson thermal zones.
-    
-    Returns:
-        str: CSV header line
-    """
-    header_parts = ['timestamp', 'device_id']
-    
-    # Add empty columns for INA260 and MCP9808 (for CSV compatibility)
-    header_parts.extend(['obc_voltage_V', 'obc_current_mA', 'obc_power_mW',
-                        'perif_voltage_V', 'perif_current_mA', 'perif_power_mW',
-                        'jetson_voltage_V', 'jetson_current_mA', 'jetson_power_mW',
-                        'obc_temp_C', 'perif_temp_C', 'jetson_temp_C',
-                        'imx8_cpu_temp_C'])
-    
-    # Add Jetson thermal zone headers
-    for zone_id in range(10):
-        header_parts.append(f"jetson_thermal_zone{zone_id}_C")
-    
-    header_parts.append('client_time')
-    return ', '.join(header_parts)
-
-
-def appender_local(timestamp, device_id, thermal_data, output_file=None):
-    """
-    Appends Jetson thermal data to local CSV file (for local logging).
-    
-    Args:
-        timestamp: Timestamp string
-        device_id: Device identifier
-        thermal_data: Dict with thermal zone data
-        output_file: Optional custom output file path
-    """
-    if output_file is None:
-        output_file = JETSON_OUTPUT_FILE
-    
-    try:
-        file = open(output_file, "a")
-        
-        # Build CSV row
-        row_parts = [timestamp, device_id]
-        
-        # Add empty columns for INA260 and MCP9808 (for CSV compatibility)
-        row_parts.extend(['', '', '',
-                         '', '', '',
-                         '', '', '',
-                         '', '', '',
-                         ''])
-        
-        # Add Jetson thermal zone data
-        for zone_id in range(10):
-            zone_key = f'zone_{zone_id}'
-            row_parts.append(str(thermal_data.get(zone_key, '')))
-        
-        row = ', '.join(row_parts) + '\n'
-        file.write(row)
-        file.close()
-        
-        return 0
-    except Exception as e:
-        print(f"Error writing to file: {e}")
-        return -1
-
-
 def wait_for_server(max_wait_time=300):
     """
-    Waits for the server to be available before proceeding.
+    Waits for the server to be available and ready before proceeding.
+    Performs handshake to confirm server is ready to receive data.
     Retries connection attempts until successful or timeout.
     
     Args:
         max_wait_time: Maximum time to wait for server in seconds (default: 5 minutes)
         
     Returns:
-        bool: True if server is available, False if timeout reached
+        bool: True if server is available and handshakes, False if timeout reached
     """
     start_time = time.time()
     retry_interval = 2  # Retry every 2 seconds
@@ -216,9 +149,24 @@ def wait_for_server(max_wait_time=300):
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(2)
             sock.connect((JETSON_SERVER_IP, JETSON_SERVER_PORT))
+            
+            # Wait for handshake/ready message from server
+            response = sock.recv(1024).decode('utf-8').strip()
             sock.close()
-            print(f"[JETSON] Server is ready! (attempt {attempt})")
-            return True
+            
+            if response:
+                try:
+                    response_data = json.loads(response)
+                    if response_data.get('status') == 'ready':
+                        print(f"[JETSON] Server handshake received! Server is ready! (attempt {attempt})")
+                        return True
+                except json.JSONDecodeError:
+                    pass
+            
+            elapsed = time.time() - start_time
+            print(f"[JETSON] Attempt {attempt}: Handshake not complete... (elapsed: {elapsed:.0f}s)")
+            time.sleep(retry_interval)
+            
         except (ConnectionRefusedError, socket.timeout, OSError):
             elapsed = time.time() - start_time
             print(f"[JETSON] Attempt {attempt}: Server not ready yet... (elapsed: {elapsed:.0f}s)")
@@ -238,39 +186,31 @@ try:
         print("[JETSON] Failed to connect to server. Exiting.")
         sys.exit(1)
     
-    # Generate timestamped output filename
-    run_timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    output_dir = os.path.dirname(JETSON_OUTPUT_FILE)
-    output_basename = os.path.basename(JETSON_OUTPUT_FILE)
-    output_name_without_ext = os.path.splitext(output_basename)[0]
-    output_ext = os.path.splitext(output_basename)[1] or '.csv'
-    timestamped_output_file = os.path.join(output_dir, f"{output_name_without_ext}_{run_timestamp}{output_ext}")
+    print("[JETSON] *** REMOTE LOGGING ONLY - No local logging ***")
     
     if DEBUG:
         print(f"[JETSON] Connecting to server at {JETSON_SERVER_IP}:{JETSON_SERVER_PORT}")
         print(f"[JETSON] Taking {JETSON_NUM_READINGS} readings")
-        print(f"[JETSON] Sampling: Reading every {JETSON_READ_INTERVAL}s")
+        print(f"[JETSON] Sampling: Reading every {JETSON_READ_INTERVAL}s, Sending every {JETSON_SEND_EVERY} sample(s)")
     
-    # Initialize I2C bus or simulation mode
+    # Initialize simulation mode info
     if SIMULATE_SENSOR:
         print("[JETSON] *** SIMULATION MODE ENABLED ***")
         print("[JETSON] Using synthetic thermal sensor data for testing")
     
-    # Initialize CSV file with header (using timestamped filename)
-    if not os.path.exists(timestamped_output_file):
-        with open(timestamped_output_file, 'w') as f:
-            f.write(get_csv_header() + '\n')
-        if DEBUG:
-            print(f"[JETSON] Created new CSV file: {timestamped_output_file}")
+    # Calculate send interval based on frequency (times per second)
+    send_interval = 1.0 / JETSON_SEND_FREQUENCY_HZ if JETSON_SEND_FREQUENCY_HZ > 0 else float('inf')
+    last_send_time = time.time()
     
     samples_read = 0
-    samples_saved = 0
-    samples_since_save = 0  # Counter for sampling control
+    samples_sent = 0
+    samples_since_send = 0  # Counter for sampling control
     
     start_real_time = time.time()
     sample_count = 0  # Counter for display purposes
     
-    print(f"[JETSON] Starting continuous data collection...")
+    print(f"[JETSON] Send frequency: {JETSON_SEND_FREQUENCY_HZ} Hz (every {send_interval:.3f}s)")
+    print(f"[JETSON] Starting continuous data collection (remote logging only)...")
     print(f"[JETSON] Send SIGTERM (Ctrl+C) to stop logging")
     
     while True:
@@ -284,27 +224,25 @@ try:
         thermal_data = read_jetson_thermal_zones()
         
         samples_read += 1
-        samples_since_save += 1
+        samples_since_send += 1
         
-        # Check if we should save this sample
-        if samples_since_save >= JETSON_SAVE_EVERY:
-            # Send over network and get server timestamp
+        # Check if it's time to send based on frequency rate limiting and decimation
+        current_time = time.time()
+        time_since_last_send = current_time - last_send_time
+        
+        # Send if: (1) decimation counter reached AND (2) enough time has passed
+        if samples_since_send >= JETSON_SEND_EVERY and time_since_last_send >= send_interval:
+            # Send over network to remote server for logging
             server_timestamp, sync_success = send_data_over_network(thermal_data)
             
-            # Use server timestamp for local storage
-            if server_timestamp:
-                appender_local(server_timestamp, JETSON_CLIENT_DEVICE_ID, thermal_data, timestamped_output_file)
-                sync_status = "[SYNCED]" if sync_success else "[LOCAL FALLBACK]"
-            else:
-                local_timestamp = datetime.datetime.now().strftime(TIMESTAMP_FORMAT)
-                appender_local(local_timestamp, JETSON_CLIENT_DEVICE_ID, thermal_data, timestamped_output_file)
-                sync_status = "[NO SYNC]"
+            sync_status = "[SENT]" if sync_success else "[SEND FAILED]"
             
-            samples_saved += 1
-            samples_since_save = 0  # Reset counter
+            samples_sent += 1
+            samples_since_send = 0  # Reset counter
+            last_send_time = current_time  # Update last send time for frequency control
             
-            # Print with save indicator
-            print(f"{sync_status} [SAVED {samples_saved}]", end="")
+            # Print with send indicator
+            print(f"{sync_status} [SENT {samples_sent}]", end="")
             # Print thermal zone data
             for zone_id in range(MAX_THERMAL_ZONES):
                 zone_key = f'zone_{zone_id}'
@@ -312,23 +250,23 @@ try:
                     print(f" Zone{zone_id}:{thermal_data[zone_key]}C", end="")
             print()
         else:
-            # Read but don't save
-            print(f"[SKIPPED]", end="")
+            # Read but don't send
+            print(f"[BUFFERED]", end="")
             # Print thermal zone data
             for zone_id in range(MAX_THERMAL_ZONES):
                 zone_key = f'zone_{zone_id}'
                 if zone_key in thermal_data:
                     print(f" Zone{zone_id}:{thermal_data[zone_key]}C", end="")
-            print(" (buffered, not sent)")
+            print(" (not yet sent)")
 
 except KeyboardInterrupt:
     elapsed_time = time.time() - start_real_time
     print(f"\n[JETSON] Logging stopped after {elapsed_time:.2f} seconds")
     print(f"[JETSON] Total samples read: {samples_read}")
-    print(f"[JETSON] Total samples saved: {samples_saved}")
+    print(f"[JETSON] Total samples sent to server: {samples_sent}")
     if samples_read > 0:
-        print(f"[JETSON] Reduction: {100 * (1 - samples_saved/samples_read):.1f}%")
-    print(f"[JETSON] Local file: {timestamped_output_file}")
+        print(f"[JETSON] Reduction: {100 * (1 - samples_sent/samples_read):.1f}%")
+    print(f"[JETSON] All data logged remotely on receiver machine")
 except Exception as e:
     print(f"[JETSON] Error: {e}")
     sys.exit(1)

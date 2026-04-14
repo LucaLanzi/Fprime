@@ -28,15 +28,21 @@ JETSON_NUM_READINGS = 5
 # Delay between readings (in seconds)
 JETSON_READ_INTERVAL = 0.1
 
-# SAMPLING CONTROL: Save every Nth reading (decimation)
+# SEND FREQUENCY: How many times per second to send data to receiver
 # Examples:
-#   SAVE_EVERY = 1   → Save all readings (no decimation)
-#   SAVE_EVERY = 5   → Save every 5th reading
-#   SAVE_EVERY = 10  → Save every 10th reading
-JETSON_SAVE_EVERY = 1
+#   JETSON_SEND_FREQUENCY_HZ = 1   → Send 1 time per second (1 Hz)
+#   JETSON_SEND_FREQUENCY_HZ = 10  → Send 10 times per second (10 Hz)
+#   JETSON_SEND_FREQUENCY_HZ = 0.5 → Send once every 2 seconds (0.5 Hz)
+# Note: This controls the rate at which data is sent to the remote server.
+# Higher values = more frequent sends = more network traffic and data points
+JETSON_SEND_FREQUENCY_HZ = 1.0
 
-# Local output file for thermal data (Jetson client-side)
-JETSON_OUTPUT_FILE = "logs/jetson_logs.csv"
+# SAMPLING CONTROL: Send every Nth reading to server (decimation - OPTIONAL)
+# If you want to combine frequency limiting with sample decimation:
+#   JETSON_SEND_EVERY = 1   → Send all readings after frequency rate-limiting
+#   JETSON_SEND_EVERY = 5   → Send every 5th reading after frequency rate-limiting
+#   JETSON_SEND_EVERY = 1   → Recommended: let JETSON_SEND_FREQUENCY_HZ handle rate control
+JETSON_SEND_EVERY = 1
 
 # ============================================================================
 # JETSON THERMAL ZONE CONFIGURATION
@@ -64,6 +70,18 @@ JETSON_THERMAL_ZONE_PATHS = [
 
 # Maximum number of thermal zones to log
 MAX_THERMAL_ZONES = 10
+
+# ============================================================================
+# LOGGING ARCHITECTURE
+# ============================================================================
+#
+# This client operates in REMOTE LOGGING ONLY mode:
+# - Reads thermal zones locally from Jetson system
+# - Sends data to receiver server over network
+# - Does NOT save data locally
+# - Waits for server handshake before starting data collection
+# - Server is the single source of truth for all data
+#
 
 # ============================================================================
 # DEBUG / DEVELOPMENT

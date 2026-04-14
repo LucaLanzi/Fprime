@@ -201,7 +201,7 @@ def save_data(timestamp, data):
 def handle_client(client_socket, client_address):
     """
     Handles a single client connection in a separate thread.
-    Receives data and saves it to CSV.
+    Sends ready handshake on connection, then receives and saves data.
     
     Args:
         client_socket: The connected socket
@@ -212,6 +212,12 @@ def handle_client(client_socket, client_address):
     print(f"[NEW CONNECTION] from {client_address}")
     
     try:
+        # Send handshake/ready message to indicate server is ready to receive
+        handshake = json.dumps({'status': 'ready', 'message': 'Server ready to receive data'}) + '\n'
+        client_socket.sendall(handshake.encode('utf-8'))
+        if DEBUG:
+            print(f"[HANDSHAKE SENT] to {client_address}")
+        
         data_buffer = b""
         while True:
             chunk = client_socket.recv(SOCKET_BUFFER_SIZE)
