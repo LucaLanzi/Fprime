@@ -49,4 +49,3 @@ SOCKET_BUFFER_SIZE = 1024
 # Socket timeout for client connections (seconds)
 # Increase if clients are slow or network is congested
 SOCKET_TIMEOUT = 5
-#making a change
