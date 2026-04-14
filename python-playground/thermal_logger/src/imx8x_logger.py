@@ -27,6 +27,12 @@ from config_imx8 import (
 
 # No local logging - all data sent to remote server
 
+
+def _read_swapped_word(bus, address, register):
+    """Read a 16-bit SMBus word and normalize it to sensor byte order."""
+    raw_value = bus.read_word_data(address, register)
+    return ((raw_value << 8) & 0xFF00) | ((raw_value >> 8) & 0x00FF)
+
 def read_single_ina260(bus, address):
     """
     Reads data from a single INA260 sensor.
@@ -46,13 +52,15 @@ def read_single_ina260(bus, address):
         }
     
     try:
-        voltage_raw = bus.read_word_data(address, INA260_BUS_VOLTAGE)
+        voltage_raw = _read_swapped_word(bus, address, INA260_BUS_VOLTAGE)
         voltage = ((voltage_raw & 0xFFFF) >> 3) * 1.25 / 1000
         
-        current_raw = bus.read_word_data(address, INA260_CURRENT)
-        current = (current_raw & 0xFFFF) * 1.25
+        current_raw = _read_swapped_word(bus, address, INA260_CURRENT)
+        if current_raw & 0x8000:
+            current_raw -= 0x10000
+        current = current_raw * 1.25
         
-        power_raw = bus.read_word_data(address, INA260_POWER)
+        power_raw = _read_swapped_word(bus, address, INA260_POWER)
         power = (power_raw & 0xFFFF) * 10
         
         return {
@@ -114,29 +122,12 @@ def read_single_mcp9808(bus, address):
         }
     
     try:
-        # Read temperature register (0x05)
-        temp_raw = bus.read_word_data(address, MCP9808_REG_TEMP)
-        
-        # MCP9808 temperature format:
-        # Upper byte: integer part
-        # Lower byte: fractional part (1/16°C resolution)
-        upper = (temp_raw >> 8) & 0xFF
-        lower = temp_raw & 0xFF
-        
-        # Extract sign bit
-        sign_bit = (upper >> 7) & 1
-        
-        # Extract integer part (bits 4-6 of upper byte)
-        int_part = upper & 0x0F
-        if sign_bit:
-            # Handle negative temperatures (two's complement)
-            int_part = -(~(int_part) & 0x0F) - 1
-        
-        # Extract fractional part (upper 4 bits of lower byte)
-        frac_part = (lower >> 4) & 0x0F
-        frac = frac_part / 16.0
-        
-        temperature = int_part + frac if sign_bit == 0 else int_part - frac
+        temp_raw = _read_swapped_word(bus, address, MCP9808_REG_TEMP)
+        temp_raw &= 0x1FFF
+
+        temperature = temp_raw / 16.0
+        if temp_raw & 0x1000:
+            temperature -= 256.0
         
         return {
             'temp_c': round(temperature, 2)
@@ -409,12 +400,12 @@ try:
             print(f"{sync_status} [SENT {samples_sent}]", end="")
             # Print INA260 data
             ina260_data = all_sensor_data.get('ina260', {})
-            for sensor_name in sorted(SENSORS_INA260.keys()):
+            for sensor_name in SENSORS_INA260:
                 data = ina260_data.get(sensor_name, {})
                 print(f" {sensor_name}:V{data.get('voltage', 0)}V,I{data.get('current', 0)}mA,P{data.get('power', 0)}mW", end="")
             # Print MCP9808 data
             mcp9808_data = all_sensor_data.get('mcp9808', {})
-            for sensor_name in sorted(SENSORS_MCP9808.keys()):
+            for sensor_name in SENSORS_MCP9808:
                 data = mcp9808_data.get(sensor_name, {})
                 print(f" {sensor_name}:T{data.get('temp_c', 0)}C", end="")
             # Print IMX8 CPU temperature
@@ -426,12 +417,12 @@ try:
             print(f"[BUFFERED]", end="")
             # Print INA260 data
             ina260_data = all_sensor_data.get('ina260', {})
-            for sensor_name in sorted(SENSORS_INA260.keys()):
+            for sensor_name in SENSORS_INA260:
                 data = ina260_data.get(sensor_name, {})
                 print(f" {sensor_name}:V{data.get('voltage', 0)}V,I{data.get('current', 0)}mA", end="")
             # Print MCP9808 data
             mcp9808_data = all_sensor_data.get('mcp9808', {})
-            for sensor_name in sorted(SENSORS_MCP9808.keys()):
+            for sensor_name in SENSORS_MCP9808:
                 data = mcp9808_data.get(sensor_name, {})
                 print(f" {sensor_name}:T{data.get('temp_c', 0)}C", end="")
             # Print IMX8 CPU temperature

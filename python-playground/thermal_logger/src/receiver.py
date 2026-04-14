@@ -67,13 +67,13 @@ def get_csv_header(device_id):
     if device_id == 'imx8':
         # IMX8: Add INA260 and MCP9808 data
         # Add INA260 headers (power monitoring)
-        for sensor_name in sorted(SENSORS_INA260.keys()):
+        for sensor_name in SENSORS_INA260:
             header_parts.append(f"{sensor_name}_voltage_V")
             header_parts.append(f"{sensor_name}_current_mA")
             header_parts.append(f"{sensor_name}_power_mW")
         
         # Add MCP9808 (temperature) headers
-        for sensor_name in sorted(SENSORS_MCP9808.keys()):
+        for sensor_name in SENSORS_MCP9808:
             header_parts.append(f"{sensor_name}_temp_C")
         
         # Add IMX8 CPU temperature header
@@ -135,7 +135,7 @@ def save_data(timestamp, data):
         if device_id == 'imx8':
             # IMX8: Add INA260 and MCP9808 data only
             # Add INA260 data for each sensor in order
-            for sensor_name in sorted(SENSORS_INA260.keys()):
+            for sensor_name in SENSORS_INA260:
                 if sensor_name in ina260_data:
                     sensor_info = ina260_data[sensor_name]
                     row_parts.append(str(sensor_info.get('voltage', 0)))
@@ -146,7 +146,7 @@ def save_data(timestamp, data):
                     row_parts.extend(['', '', ''])
             
             # Add MCP9808 (temperature) data for each sensor in order
-            for sensor_name in sorted(SENSORS_MCP9808.keys()):
+            for sensor_name in SENSORS_MCP9808:
                 if sensor_name in mcp9808_data:
                     sensor_info = mcp9808_data[sensor_name]
                     row_parts.append(str(sensor_info.get('temp_c', 0)))
@@ -176,12 +176,12 @@ def save_data(timestamp, data):
         # Print summary
         print(f"[{device_id}] {timestamp}", end="")
         # Print INA260 data
-        for sensor_name in sorted(SENSORS_INA260.keys()):
+        for sensor_name in SENSORS_INA260:
             if sensor_name in ina260_data:
                 info = ina260_data[sensor_name]
                 print(f" | {sensor_name}:V{info.get('voltage', 0)}V,I{info.get('current', 0)}mA,P{info.get('power', 0)}mW", end="")
         # Print MCP9808 data
-        for sensor_name in sorted(SENSORS_MCP9808.keys()):
+        for sensor_name in SENSORS_MCP9808:
             if sensor_name in mcp9808_data:
                 info = mcp9808_data[sensor_name]
                 print(f" | {sensor_name}:T{info.get('temp_c', 0)}C", end="")
