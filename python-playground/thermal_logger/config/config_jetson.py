@@ -10,7 +10,7 @@ Customize these settings for your Jetson device and network.
 # Server IP address
 # For LOCAL TESTING: "127.0.0.1" or "localhost"
 # For NETWORK TESTING: Use the server's actual IP (e.g., "192.168.1.100")
-JETSON_SERVER_IP = "127.0.0.1"
+JETSON_SERVER_IP = "192.168.3.13"
 
 # Server port (must match receiver.py SERVER_PORT)
 JETSON_SERVER_PORT = 8000

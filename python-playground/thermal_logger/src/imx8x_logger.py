@@ -1,4 +1,3 @@
-import random
 import time
 import datetime
 import socket
@@ -35,19 +34,12 @@ def read_single_ina260(bus, address):
     Reads data from a single INA260 sensor.
     
     Args:
-        bus: smbus2.SMBus object or None for simulation
+        bus: smbus2.SMBus object
         address: I2C address of the sensor
         
     Returns:
         dict: Parsed sensor data with keys 'voltage', 'current', 'power'
     """
-    if SIMULATE_SENSOR or bus is None:
-        return {
-            'voltage': round(random.uniform(4.8, 5.2), 3),
-            'current': round(random.uniform(200, 400), 2),
-            'power': round(random.uniform(1000, 2000), 1)
-        }
-    
     try:
         voltage_raw = bus.read_word_data(address, INA260_BUS_VOLTAGE)
         voltage = ((voltage_raw & 0xFFFF) >> 3) * 1.25 / 1000
@@ -105,17 +97,12 @@ def read_single_mcp9808(bus, address):
     Reads temperature from a single MCP9808 sensor.
     
     Args:
-        bus: smbus2.SMBus object or None for simulation
+        bus: smbus2.SMBus object
         address: I2C address of the sensor
         
     Returns:
         dict: Temperature data with key 'temp_c' (Celsius)
     """
-    if SIMULATE_SENSOR or bus is None:
-        return {
-            'temp_c': round(random.uniform(20.0, 60.0), 2)  # Simulate 20-60°C
-        }
-    
     try:
         # Read temperature register (0x05)
         temp_raw = bus.read_word_data(address, MCP9808_REG_TEMP)
@@ -184,12 +171,6 @@ def read_imx8_cpu_temperature():
         dict: Temperature data with key 'temp_c' (Celsius)
               Format: {'temp_c': X}
     """
-    if SIMULATE_SENSOR:
-        # Simulate IMX8 CPU temperature (typically higher than ambient)
-        return {
-            'temp_c': round(random.uniform(40.0, 85.0), 2)
-        }
-    
     # Try primary path first
     sensor_paths = [IMX8_TEMP_SENSOR_PATH] + IMX8_TEMP_SENSOR_FALLBACK_PATHS
     
