@@ -95,38 +95,20 @@ IMX8_TEMP_SENSOR_FALLBACK_PATHS = [
 # ============================================================================
 
 # Number of readings to take
-NUM_READINGS = 5
+NUM_READINGS = 1
 
 # Delay between readings (in seconds)
-READ_INTERVAL = 0.5
+READ_INTERVAL = 1
 
-# SEND FREQUENCY: How many times per second to send data to receiver
+# SAMPLING CONTROL: Save every Nth reading (decimation)
 # Examples:
-#   SEND_FREQUENCY_HZ = 1   → Send 1 time per second (1 Hz)
-#   SEND_FREQUENCY_HZ = 10  → Send 10 times per second (10 Hz)
-#   SEND_FREQUENCY_HZ = 0.5 → Send once every 2 seconds (0.5 Hz)
-# Note: This controls the rate at which data is sent to the remote server.
-# Higher values = more frequent sends = more network traffic and data points
-SEND_FREQUENCY_HZ = 1.0
+#   SAVE_EVERY = 1   → Save all readings (no decimation)
+#   SAVE_EVERY = 5   → Save every 5th reading (read 5x more often than save)
+#   SAVE_EVERY = 10  → Save every 10th reading
+SAVE_EVERY = 1
 
-# SAMPLING CONTROL: Send every Nth reading to server (decimation - OPTIONAL)
-# If you want to combine frequency limiting with sample decimation:
-#   SEND_EVERY = 1   → Send all readings after frequency rate-limiting
-#   SEND_EVERY = 5   → Send every 5th reading after frequency rate-limiting
-#   SEND_EVERY = 1   → Recommended: let SEND_FREQUENCY_HZ handle rate control
-SEND_EVERY = 1
-
-# ============================================================================
-# LOGGING ARCHITECTURE
-# ============================================================================
-# 
-# This client operates in REMOTE LOGGING ONLY mode:
-# - Reads sensors locally (INA260, MCP9808, CPU thermal zones)
-# - Sends data to receiver server over network
-# - Does NOT save data locally
-# - Waits for server handshake before starting data collection
-# - Server is the single source of truth for all data
-#
+# Local output file for sensor data (IMX8 client-side)
+CLIENT_OUTPUT_FILE = "logs/imx_logs.csv"
 
 # ============================================================================
 # DEBUG / DEVELOPMENT

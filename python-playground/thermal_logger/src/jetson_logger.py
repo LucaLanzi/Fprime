@@ -1,4 +1,3 @@
-import random
 import time
 import datetime
 import socket
@@ -39,19 +38,6 @@ def read_jetson_thermal_zones():
                   ...
               }
     """
-    if SIMULATE_SENSOR:
-        # Simulate Jetson thermal zones with realistic temperatures
-        thermal_data = {}
-        for zone_id in range(10):
-            # Simulate different temperature ranges for different zones
-            if zone_id == 0:  # GPU - typically runs hot
-                thermal_data[f'zone_{zone_id}'] = round(random.uniform(50.0, 90.0), 2)
-            elif zone_id == 1:  # System - moderate temperatures
-                thermal_data[f'zone_{zone_id}'] = round(random.uniform(40.0, 70.0), 2)
-            else:  # Other zones - lower temps
-                thermal_data[f'zone_{zone_id}'] = round(random.uniform(35.0, 60.0), 2)
-        return thermal_data
-    
     thermal_data = {}
     
     for zone_id, sensor_path in enumerate(JETSON_THERMAL_ZONE_PATHS):
