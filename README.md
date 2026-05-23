@@ -1,2 +1,1 @@
-# Code Repo for all my projects
-Includes things in C++, Shell, Fprime work, Python and more
+# Repo for helper programs being used to develop for SCALES
