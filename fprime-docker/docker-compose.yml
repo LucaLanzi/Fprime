@@ -1,0 +1,32 @@
+version: '3'
+services:
+  fprime:
+    image: nasafprime/fprime-arm:latest
+    container_name: fprime-dev
+    platform: linux/amd64
+    volumes:
+      - /Users/luquito/Documents/GitHub/fprime-scales-ref:/workspace
+      - /Users/luquito/BSP-Yocto-NXP-i.MX8X-PD24.1.y:/bsp
+    working_dir: /workspace
+    stdin_open: true
+    tty: true
+    networks:
+      - fprime-net
+
+  yocto:
+    image: docker.io/phybuilder/yocto-ubuntu-22.04
+    container_name: yocto-builder
+    entrypoint: /bin/bash
+    command: -c "useradd -m -s /bin/bash builder && usermod -aG sudo builder && echo 'builder ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers && su - builder"
+    volumes:
+      - /Users/luquito/BSP-Yocto-NXP-i.MX8X-PD24.1.y:/bsp
+      - /Users/luquito/Documents/GitHub/fprime-scales-ref:/workspace
+      - /Users/luquito/build-artifacts:/artifacts
+    working_dir: /bsp
+    stdin_open: true
+    tty: true
+    networks:
+      - fprime-net
+
+networks:
+  fprime-net:
